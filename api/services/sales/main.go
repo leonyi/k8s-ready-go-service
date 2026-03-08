@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"expvar"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ardanlabs/conf/v3"
+	"github.com/ardanlabs/service/api/services/api/debug"
 	"github.com/ardanlabs/service/foundation/logger"
 )
 
@@ -98,6 +101,22 @@ func run(ctx context.Context, log *logger.Logger) error {
 		return fmt.Errorf("generating config for output: %w", err)
 	}
 	log.Info(ctx, "startup", "config", out)
+
+	expvar.NewString("build").Set(cfg.Build)
+
+	// -------------------------------------------------------------------------
+	// Start Debug Service
+
+	go func() {
+		log.Info(ctx, "startup", "status", "debug v1 router started", "host", cfg.Web.DebugHost)
+
+		// http.DefaultServeMux is the default HTTP request multiplexer in Go.
+		// It is a built-in type that implements the http.Handler. Any package can register handlers to this default multiplexer using the http.HandleFunc or http.Handle functions.
+		// It's a security risk to use it in lines like this one, instead define your own!
+		if err := http.ListenAndServe(cfg.Web.DebugHost, debug.Mux()); err != nil {
+			log.Error(ctx, "shutdown", "status", "debug v1 router closed", "host", cfg.Web.DebugHost, "msg", err)
+		}
+	}()
 
 	// -------------------------------------------------------------------------
 

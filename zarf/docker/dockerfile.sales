@@ -7,7 +7,7 @@ ARG BUILD_TAG
 COPY . /service
 
 # Build the service binary.
-WORKDIR /service/apis/services/sales
+WORKDIR /service/api/services/sales
 RUN go build -ldflags "-X main.tag=${BUILD_TAG}"
 
 # Run the Go Binary in Alpine. The lightest possible image here is always preferable
