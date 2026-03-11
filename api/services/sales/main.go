@@ -119,16 +119,51 @@ func run(ctx context.Context, log *logger.Logger) error {
 	}()
 
 	// -------------------------------------------------------------------------
+	// Start API Service
 
-	// Creates a channel of type os.Signal with a buffer of 1 to receive shutdown signals.
-	// The signal.Notify function is used to register the channel to receive notifications for SIGINT and SIGTERM signals,
-	// which are common signals used to indicate that the program should terminate gracefully.
+	log.Info(ctx, "startup", "status", "initializing V1 API support")
+
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
 
-	sig := <-shutdown
-	log.Info(ctx, "shutdown", "status", "shutdown started", "signal", sig)
-	defer log.Info(ctx, "shutdown", "status", "shutdown complete", "signal", sig)
+	api := http.Server{
+		Addr:         cfg.Web.APIHost,
+		Handler:      nil, // TODO: replace with API handler
+		ReadTimeout:  cfg.Web.ReadTimeout,
+		WriteTimeout: cfg.Web.WriteTimeout,
+		IdleTimeout:  cfg.Web.IdleTimeout,
+		ErrorLog:     logger.NewStdLogger(log, logger.LevelError),
+	}
+
+	serverErrors := make(chan error, 1) // Error channel to capture server errors.
+
+	go func() {
+		log.Info(ctx, "startup", "status", "api router started", "host", api.Addr)
+
+		serverErrors <- api.ListenAndServe() // ListenAndServe will block until the server is stopped, at which point it will return an error. This error is sent to the serverErrors channel.
+	}()
+
+	// -------------------------------------------------------------------------
+	// Shutdown
+
+	select {
+	case err := <-serverErrors:
+		return fmt.Errorf("server error: %w", err)
+
+	case sig := <-shutdown:
+		log.Info(ctx, "shutdown", "status", "shutdown started", "signal", sig)
+		defer log.Info(ctx, "shutdown", "status", "shutdown complete", "signal", sig)
+
+		ctx, cancel := context.WithTimeout(ctx, cfg.Web.ShutdownTimeout) // Create a context with a timeout for the shutdown process.
+		//This ensures that if the shutdown takes too long, it will be forcefully terminated after the specified duration.
+		// We could have potentially written some bad concurrency code.
+		defer cancel()
+
+		if err := api.Shutdown(ctx); err != nil {
+			api.Close()
+			return fmt.Errorf("could not stop server gracefully: %w", err)
+		}
+	}
 
 	return nil
 }
